@@ -1,4 +1,4 @@
-```html
+html
 <!DOCTYPE html>
 <html>
 <head>
@@ -73,6 +73,12 @@ let lastPanX=0
 let lastPanY=0
 
 let needsRedraw=true
+
+/* タップ誤爆防止 */
+
+let downX=0
+let downY=0
+let moved=false
 
 /* 描画ループ */
 
@@ -170,7 +176,7 @@ y:(y-offsetY)/scale
 }
 
 
-/* pointer down */
+/* pointerdown */
 
 canvas.addEventListener("pointerdown",e=>{
 
@@ -181,10 +187,14 @@ pointers.push(e)
 lastPanX=e.clientX
 lastPanY=e.clientY
 
+downX=e.clientX
+downY=e.clientY
+moved=false
+
 })
 
 
-/* pointer move */
+/* pointermove */
 
 canvas.addEventListener("pointermove",e=>{
 
@@ -233,15 +243,19 @@ return
 }
 
 
-/* 1本指移動 */
+/* 1本指パン */
 
 if(pointers.length===1){
 
-const dx=(e.clientX-lastPanX)
-const dy=(e.clientY-lastPanY)
+const dx=e.clientX-lastPanX
+const dy=e.clientY-lastPanY
 
 offsetX+=dx
 offsetY+=dy
+
+if(Math.abs(e.clientX-downX)>6 || Math.abs(e.clientY-downY)>6){
+moved=true
+}
 
 lastPanX=e.clientX
 lastPanY=e.clientY
@@ -253,17 +267,14 @@ needsRedraw=true
 })
 
 
+/* pointerup */
+
 canvas.addEventListener("pointerup",e=>{
 
 pointers=pointers.filter(p=>p.pointerId!==e.pointerId)
 lastDistance=0
 
-})
-
-
-/* タップで点追加 */
-
-canvas.addEventListener("click",e=>{
+if(!moved){
 
 const pos=getMousePos(e)
 
@@ -271,10 +282,13 @@ points.push(pos)
 
 needsRedraw=true
 
+}
+
 })
 
 
 /* マウスホイールズーム */
+
 canvas.addEventListener("wheel",e=>{
 
 e.preventDefault()
@@ -291,7 +305,7 @@ offsetY=mouseY-(mouseY-offsetY)*zoom
 
 scale*=zoom
 
-draw()
+needsRedraw=true
 
 })
 
