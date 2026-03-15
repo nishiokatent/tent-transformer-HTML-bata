@@ -72,6 +72,23 @@ let lastDistance=0
 let lastPanX=0
 let lastPanY=0
 
+let needsRedraw=true
+
+/* 描画ループ */
+
+function renderLoop(){
+
+if(needsRedraw){
+draw()
+needsRedraw=false
+}
+
+requestAnimationFrame(renderLoop)
+
+}
+
+requestAnimationFrame(renderLoop)
+
 
 /* CSV読み込み */
 
@@ -127,7 +144,7 @@ originalImage=img
 points=[]
 maskPath=null
 
-draw()
+needsRedraw=true
 
 }
 
@@ -206,7 +223,7 @@ offsetY=canvasY-(canvasY-offsetY)*zoom
 
 scale*=zoom
 
-draw()
+needsRedraw=true
 
 }
 
@@ -220,8 +237,8 @@ return
 
 if(pointers.length===1){
 
-const dx = (e.clientX - lastPanX)
-const dy = (e.clientY - lastPanY)
+const dx=(e.clientX-lastPanX)
+const dy=(e.clientY-lastPanY)
 
 offsetX+=dx
 offsetY+=dy
@@ -229,7 +246,7 @@ offsetY+=dy
 lastPanX=e.clientX
 lastPanY=e.clientY
 
-draw()
+needsRedraw=true
 
 }
 
@@ -252,18 +269,25 @@ const pos=getMousePos(e)
 
 points.push(pos)
 
-draw()
+needsRedraw=true
 
 })
 
 
 /* マウスホイールズーム */
-
 canvas.addEventListener("wheel",e=>{
 
 e.preventDefault()
 
+const rect=canvas.getBoundingClientRect()
+
+const mouseX=(e.clientX-rect.left)*(canvas.width/rect.width)
+const mouseY=(e.clientY-rect.top)*(canvas.height/rect.height)
+
 const zoom=e.deltaY<0?1.1:0.9
+
+offsetX=mouseX-(mouseX-offsetX)*zoom
+offsetY=mouseY-(mouseY-offsetY)*zoom
 
 scale*=zoom
 
@@ -331,12 +355,12 @@ maskPath.lineTo(points[i].x,points[i].y)
 
 maskPath.closePath()
 
-draw()
+needsRedraw=true
 
 }
 
 
-document.getElementById("fabricSelect").onchange=draw
+document.getElementById("fabricSelect").onchange=()=>{needsRedraw=true}
 
 
 /* 生地合成 */
@@ -368,7 +392,7 @@ ctx.restore()
 function undoPoint(){
 
 points.pop()
-draw()
+needsRedraw=true
 
 }
 
@@ -379,7 +403,7 @@ function clearPolygon(){
 
 points=[]
 maskPath=null
-draw()
+needsRedraw=true
 
 }
 
