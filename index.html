@@ -1,243 +1,582 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html>
 <head>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>Tent Simulator AI</title>
+
+<title>Tent Simulator</title>
+
 <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; padding: 10px; -webkit-touch-callout: none; user-select: none; }
-    canvas { border: 1px solid #aaa; max-width: 95%; touch-action: none; background-color: #f0f0f0; -webkit-touch-callout: none; }
-    button { margin: 5px; padding: 10px 15px; }
-    #status { color: #666; font-size: 0.8em; margin-bottom: 10px; min-height: 1.2em; }
+
+/* =========================
+   ページスタイル
+========================= */
+
+body{
+font-family:sans-serif;
+text-align:center;
+}
+
+canvas{
+border:1px solid #aaa;
+max-width:95%;
+touch-action:none;
+}
+
+button{
+margin:5px;
+padding:8px 12px;
+}
+
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3" crossorigin="anonymous"></script>
 </head>
+
 <body>
 
-<h2>テント張替えシミュレーター AI</h2>
-<div id="status">ライブラリ読み込み中...</div>
+<!-- =========================
+     UI
+========================= -->
 
-<input type="file" id="upload" accept="image/*"><br><br>
-<select id="fabricSelect"><option>生地読み込み中...</option></select>
+<h2>テント張替えシミュレーターTEST</h2>
+
+<input type="file" id="upload"><br><br>
+
+<select id="fabricSelect">
+<option>生地読み込み中...</option>
+</select>
 
 <br><br>
+
 <button onclick="undoPoint()">1点戻す</button>
-<button onclick="clearPolygon()">リセット</button>
+<button onclick="clearPolygon()">囲い削除</button>
 <button onclick="finishPolygon()">囲み完了</button>
 <button onclick="saveImage()">画像保存</button>
 
 <br><br>
+
 <canvas id="canvas"></canvas>
+
 <div id="saveArea"></div>
 
 <script>
-let interactiveSegmenter;
-const statusDiv = document.getElementById("status");
-
-// ライブラリが完全に読み込まれるのを待つ関数
-async function setupAI() {
-    try {
-        // mediapipeオブジェクトが存在するかチェック
-        if (typeof mediapipe === 'undefined' || !mediapipe.tasksVision) {
-            statusDiv.textContent = "再試行中...";
-            setTimeout(setupAI, 500);
-            return;
-        }
-
-        const { InteractiveSegmenter, FilesetResolver } = mediapipe.tasksVision;
-        
-        const vision = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
-
-        interactiveSegmenter = await InteractiveSegmenter.createFromOptions(vision, {
-            baseOptions: {
-                modelAssetPath: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/models/interactive_segmenter.tflite`,
-                delegate: "GPU"
-            },
-            outputCategoryMask: true,
-            outputConfidenceMasks: false
-        });
-        statusDiv.textContent = "AI準備完了：テントをタップして自動抽出";
-    } catch (e) {
-        statusDiv.innerHTML = `<span style='color:red;'>⚠️ 起動失敗: ${e.message}</span>`;
-        console.error("AI Init Error:", e);
-    }
-}
-
-// ページ読み込み完了後に実行
-window.onload = setupAI;
 
 /* =========================
-   Canvas 処理
+   CSV設定
 ========================= */
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-let originalImage = null, points = [], maskPath = null;
-let scale = 1, offsetX = 0, offsetY = 0, pointers = [];
-let lastDistance = 0, lastPanX = 0, lastPanY = 0, moved = false, pinchUsed = false;
-let needsRedraw = true;
 
-function renderLoop() { if (needsRedraw) { draw(); needsRedraw = false; } requestAnimationFrame(renderLoop); }
-requestAnimationFrame(renderLoop);
+const csvURL="https://docs.google.com/spreadsheets/d/e/2PACX-1vQyMy5PUSJjr1f_fnQIpRIUagAp8Dw7Hqckr9422w_459qgQ_j4Bhw4LWygLVWTURa9n4Xl_gBNHAie/pub?output=csv"
 
-// 生地データの読み込み (CSV URLはそのまま)
-const csvURL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQyMy5PUSJjr1f_fnQIpRIUagAp8Dw7Hqckr9422w_459qgQ_j4Bhw4LWygLVWTURa9n4Xl_gBNHAie/pub?output=csv";
-fetch(csvURL).then(res => res.text()).then(text => {
-    const rows = text.trim().split("\n").slice(1);
-    const select = document.getElementById("fabricSelect");
-    select.innerHTML = "";
-    rows.forEach(row => {
-        const cols = row.split(",");
-        const option = document.createElement("option");
-        option.textContent = `${cols[0]} ${cols[1]} ${cols[2]} ${cols[3]}`;
-        option.value = (cols[4] && cols[5] && cols[6]) ? `${cols[4]},${cols[5]},${cols[6]}` : "";
-        select.appendChild(option);
-    });
-});
 
-document.getElementById("upload").onchange = e => {
-    const file = e.target.files[0];
-    if(!file) return;
-    const img = new Image();
-    img.onload = () => {
-        canvas.width = img.width; canvas.height = img.height;
-        scale = 1; offsetX = 0; offsetY = 0;
-        originalImage = img; points = []; maskPath = null;
-        needsRedraw = true;
-    };
-    img.src = URL.createObjectURL(file);
-};
+/* =========================
+   Canvas初期化
+========================= */
 
-function getMousePos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-    return { x: (x - offsetX) / scale, y: (y - offsetY) / scale };
+const canvas=document.getElementById("canvas")
+const ctx=canvas.getContext("2d")
+
+
+/* =========================
+   画像・ポリゴン状態
+========================= */
+
+let originalImage=null
+let points=[]
+let maskPath=null
+
+
+/* =========================
+   ズーム・パン状態
+========================= */
+
+let scale=1
+let offsetX=0
+let offsetY=0
+
+
+/* =========================
+   ポインター操作状態
+========================= */
+
+let pointers=[]
+let lastDistance=0
+let lastPanX=0
+let lastPanY=0
+
+let downX=0
+let downY=0
+let moved=false
+let pinchUsed=false
+
+
+/* =========================
+   描画制御
+========================= */
+
+let needsRedraw=true
+
+
+/* =========================
+   描画ループ
+========================= */
+
+function renderLoop(){
+
+if(needsRedraw){
+draw()
+needsRedraw=false
 }
 
-async function runAISegmentation(x, y) {
-    if (!interactiveSegmenter || !originalImage) return;
-    statusDiv.textContent = "解析中...";
-    points = []; maskPath = null;
-    const result = interactiveSegmenter.segment(originalImage, {
-        keypoint: { x: x / canvas.width, y: y / canvas.height }
-    });
-    const mask = result.categoryMask.getAsUint8Array();
-    processMask(mask);
+requestAnimationFrame(renderLoop)
+
 }
 
-function processMask(maskData) {
-    const mCanvas = document.createElement("canvas");
-    mCanvas.width = canvas.width; mCanvas.height = canvas.height;
-    const mCtx = mCanvas.getContext("2d");
-    const mImgData = mCtx.createImageData(canvas.width, canvas.height);
-    let hit = false;
-    for (let i = 0; i < maskData.length; i++) {
-        if (maskData[i] > 0) { mImgData.data[i * 4] = 255; mImgData.data[i * 4 + 3] = 255; hit = true; }
-    }
-    mCtx.putImageData(mImgData, 0, 0);
-    if(hit) { maskPath = new Path2D(mCanvas); statusDiv.textContent = "抽出完了"; }
-    else { statusDiv.textContent = "範囲が見つかりませんでした"; }
-    needsRedraw = true;
+requestAnimationFrame(renderLoop)
+
+/* =========================
+   CSV読み込み（生地マスター）
+========================= */
+
+fetch(csvURL)
+.then(res=>res.text())
+.then(text=>{
+
+const rows=text.trim().split("\n").slice(1)
+const select=document.getElementById("fabricSelect")
+
+select.innerHTML=""
+
+rows.forEach(row=>{
+
+if(!row.trim())return
+
+const cols=row.split(",")
+
+// CSV構造に対応
+const maker=cols[0]
+const fabric=cols[1]
+const code=cols[2]
+const color=cols[3]
+const r=cols[4]
+const g=cols[5]
+const b=cols[6]
+
+// 表示名（自由に変えられる）
+const name=`${maker} ${fabric} ${code} ${color}`
+
+// RGBが空のとき対策
+const hasRGB = r && g && b
+
+const option=document.createElement("option")
+
+option.textContent=name
+
+if(hasRGB){
+option.value=`${r},${g},${b}`
+}else{
+option.value="" // 空にする
 }
 
-canvas.addEventListener("pointerdown", e => {
-    if(e.pointerType === 'touch') e.preventDefault();
-    canvas.setPointerCapture(e.pointerId);
-    pointers.push(e);
-    lastPanX = e.clientX; lastPanY = e.clientY;
-    moved = false; pinchUsed = false;
-});
+select.appendChild(option)
 
-canvas.addEventListener("pointermove", e => {
-    for(let i=0; i<pointers.length; i++){ if(pointers[i].pointerId === e.pointerId) pointers[i] = e; }
-    if(pointers.length === 2) {
-        pinchUsed = true;
-        const p1 = pointers[0], p2 = pointers[1];
-        const rect = canvas.getBoundingClientRect();
-        const centerX = (p1.clientX + p2.clientX) / 2;
-        const centerY = (p1.clientY + p2.clientY) / 2;
-        const canvasX = (centerX - rect.left) * (canvas.width / rect.width);
-        const canvasY = (centerY - rect.top) * (canvas.height / rect.height);
-        const distance = Math.sqrt(Math.pow(p1.clientX - p2.clientX, 2) + Math.pow(p1.clientY - p2.clientY, 2));
-        if(lastDistance) {
-            const zoom = distance / lastDistance;
-            offsetX = canvasX - (canvasX - offsetX) * zoom;
-            offsetY = canvasY - (canvasY - offsetY) * zoom;
-            scale *= zoom; needsRedraw = true;
-        }
-        lastDistance = distance;
-    } else if(pointers.length === 1) {
-        const dx = e.clientX - lastPanX, dy = e.clientY - lastPanY;
-        offsetX += dx; offsetY += dy;
-        if(Math.abs(dx) > 5 || Math.abs(dy) > 5) moved = true;
-        lastPanX = e.clientX; lastPanY = e.clientY;
-        needsRedraw = true;
-    }
-});
+})
 
-canvas.addEventListener("pointerup", e => {
-    pointers = pointers.filter(p => p.pointerId !== e.pointerId);
-    lastDistance = 0;
-    if(!moved && !pinchUsed) {
-        const pos = getMousePos(e);
-        if(interactiveSegmenter) runAISegmentation(pos.x, pos.y);
-        else points.push(pos);
-        needsRedraw = true;
-    }
-});
+})
 
-function draw() {
-    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
-    if(originalImage) ctx.drawImage(originalImage, 0, 0);
-    if(maskPath) { applyFabric(); }
-    else if(points.length > 0) {
-        ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
-        for(let i=1; i<points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-        ctx.strokeStyle = "red"; ctx.lineWidth = 3/scale; ctx.stroke();
-    }
+/* =========================
+   画像アップロード
+========================= */
+
+document.getElementById("upload").onchange=e=>{
+
+const file=e.target.files[0]
+const img=new Image()
+
+img.onload=()=>{
+
+canvas.width=img.width
+canvas.height=img.height
+
+scale=1
+offsetX=0
+offsetY=0
+
+originalImage=img
+points=[]
+maskPath=null
+
+needsRedraw=true
+
 }
 
-function applyFabric() {
-    const val = document.getElementById("fabricSelect").value;
-    if(!val || !maskPath) return;
-    const rgb = val.split(",");
-    ctx.save(); ctx.clip(maskPath); ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore();
+img.src=URL.createObjectURL(file)
+
 }
 
-function finishPolygon() {
-    if(points.length < 3) return;
-    maskPath=new Path2D(); maskPath.moveTo(points[0].x, points[0].y);
-    for(let i=1; i<points.length; i++) maskPath.lineTo(points[i].x, points[i].y);
-    maskPath.closePath(); points = []; needsRedraw = true;
+
+/* =========================
+   座標取得
+========================= */
+
+function getMousePos(e){
+
+const rect=canvas.getBoundingClientRect()
+
+const x=(e.clientX-rect.left)*(canvas.width/rect.width)
+const y=(e.clientY-rect.top)*(canvas.height/rect.height)
+
+return{
+x:(x-offsetX)/scale,
+y:(y-offsetY)/scale
 }
 
-document.getElementById("fabricSelect").onchange = () => { needsRedraw = true; };
-function undoPoint() { points.pop(); needsRedraw = true; }
-function clearPolygon() { points = []; maskPath = null; statusDiv.textContent = "AI準備完了"; needsRedraw = true; }
-
-function saveImage() {
-    if(!originalImage) return;
-    const out = document.createElement("canvas");
-    out.width = canvas.width; out.height = canvas.height;
-    const octx = out.getContext("2d");
-    octx.drawImage(originalImage, 0, 0);
-    if(maskPath) {
-        const rgb = document.getElementById("fabricSelect").value.split(",");
-        octx.save(); octx.clip(maskPath); octx.globalCompositeOperation = "multiply";
-        octx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-        octx.fillRect(0, 0, out.width, out.height); octx.restore();
-    }
-    const url = out.toDataURL("image/png");
-    const area = document.getElementById("saveArea");
-    area.innerHTML = "<h4>↓ 長押しして保存</h4>";
-    const img = new Image(); img.src = url; img.style.width = "95%";
-    area.appendChild(img);
 }
+
+
+/* =========================
+   pointerdown
+========================= */
+
+canvas.addEventListener("pointerdown",e=>{
+
+canvas.setPointerCapture(e.pointerId)
+
+pointers.push(e)
+
+lastPanX=e.clientX
+lastPanY=e.clientY
+
+downX=e.clientX
+downY=e.clientY
+moved=false
+pinchUsed=false
+
+})
+
+
+/* =========================
+   pointermove
+========================= */
+
+canvas.addEventListener("pointermove",e=>{
+
+for(let i=0;i<pointers.length;i++){
+if(pointers[i].pointerId===e.pointerId){
+pointers[i]=e
+}
+}
+
+if(pointers.length===2){
+
+pinchUsed=true
+
+const p1=pointers[0]
+const p2=pointers[1]
+
+const rect=canvas.getBoundingClientRect()
+
+const centerX=(p1.clientX+p2.clientX)/2
+const centerY=(p1.clientY+p2.clientY)/2
+
+const canvasX=(centerX-rect.left)*(canvas.width/rect.width)
+const canvasY=(centerY-rect.top)*(canvas.height/rect.height)
+
+const dx=p1.clientX-p2.clientX
+const dy=p1.clientY-p2.clientY
+
+const distance=Math.sqrt(dx*dx+dy*dy)
+
+if(lastDistance){
+
+const zoom=distance/lastDistance
+
+offsetX=canvasX-(canvasX-offsetX)*zoom
+offsetY=canvasY-(canvasY-offsetY)*zoom
+
+scale*=zoom
+
+needsRedraw=true
+
+}
+
+lastDistance=distance
+return
+}
+
+if(pointers.length===1){
+
+const dx=e.clientX-lastPanX
+const dy=e.clientY-lastPanY
+
+offsetX+=dx
+offsetY+=dy
+
+if(Math.abs(e.clientX-downX)>6 || Math.abs(e.clientY-downY)>6){
+moved=true
+}
+
+lastPanX=e.clientX
+lastPanY=e.clientY
+
+needsRedraw=true
+
+}
+
+})
+
+
+/* =========================
+   pointerup
+========================= */
+
+canvas.addEventListener("pointerup",e=>{
+
+pointers=pointers.filter(p=>p.pointerId!==e.pointerId)
+
+lastDistance=0
+
+if(!moved && !pinchUsed){
+
+const pos=getMousePos(e)
+
+points.push(pos)
+
+needsRedraw=true
+
+}
+
+})
+
+
+/* =========================
+   pointercancel
+========================= */
+
+canvas.addEventListener("pointercancel",e=>{
+
+pointers=pointers.filter(p=>p.pointerId!==e.pointerId)
+lastDistance=0
+
+})
+
+
+/* =========================
+   マウスホイールズーム
+========================= */
+
+canvas.addEventListener("wheel",e=>{
+
+e.preventDefault()
+
+const rect=canvas.getBoundingClientRect()
+
+const mouseX=(e.clientX-rect.left)*(canvas.width/rect.width)
+const mouseY=(e.clientY-rect.top)*(canvas.height/rect.height)
+
+const zoom=e.deltaY<0?1.1:0.9
+
+offsetX=mouseX-(mouseX-offsetX)*zoom
+offsetY=mouseY-(mouseY-offsetY)*zoom
+
+scale*=zoom
+
+needsRedraw=true
+
+})
+
+
+/* =========================
+   描画処理
+========================= */
+
+function draw(){
+
+ctx.setTransform(1,0,0,1,0,0)
+ctx.clearRect(0,0,canvas.width,canvas.height)
+
+ctx.setTransform(scale,0,0,scale,offsetX,offsetY)
+
+if(originalImage){
+ctx.drawImage(originalImage,0,0)
+}
+
+if(maskPath){
+applyFabric()
+return
+}
+
+if(points.length===0)return
+
+ctx.beginPath()
+ctx.moveTo(points[0].x,points[0].y)
+
+for(let i=1;i<points.length;i++){
+ctx.lineTo(points[i].x,points[i].y)
+}
+
+ctx.strokeStyle="red"
+ctx.lineWidth=3
+ctx.stroke()
+
+for(let p of points){
+
+ctx.beginPath()
+ctx.arc(p.x,p.y,6,0,Math.PI*2)
+ctx.fillStyle="red"
+ctx.fill()
+
+}
+
+}
+
+
+/* =========================
+   囲い完成
+========================= */
+
+function finishPolygon(){
+
+if(points.length<3)return
+
+maskPath=new Path2D()
+
+maskPath.moveTo(points[0].x,points[0].y)
+
+for(let i=1;i<points.length;i++){
+maskPath.lineTo(points[i].x,points[i].y)
+}
+
+maskPath.closePath()
+
+needsRedraw=true
+
+}
+
+
+document.getElementById("fabricSelect").onchange=()=>{needsRedraw=true}
+
+
+/* =========================
+   生地合成
+========================= */
+
+function applyFabric(){
+
+if(!maskPath)return
+
+const val=document.getElementById("fabricSelect").value
+const cols=val.split(",")
+
+ctx.save()
+
+ctx.clip(maskPath)
+
+ctx.globalCompositeOperation="multiply"
+
+ctx.fillStyle=`rgb(${cols[0]},${cols[1]},${cols[2]})`
+
+ctx.fillRect(0,0,canvas.width,canvas.height)
+
+ctx.restore()
+
+}
+
+
+/* =========================
+   1点戻す
+========================= */
+
+function undoPoint(){
+points.pop()
+needsRedraw=true
+}
+
+
+/* =========================
+   囲い削除
+========================= */
+
+function clearPolygon(){
+points=[]
+maskPath=null
+needsRedraw=true
+}
+
+
+/* =========================
+   画像保存
+========================= */
+
+function saveImage(){
+
+if(!originalImage)return
+
+const exportCanvas=document.createElement("canvas")
+const exportCtx=exportCanvas.getContext("2d")
+
+exportCanvas.width=canvas.width
+exportCanvas.height=canvas.height
+
+exportCtx.drawImage(originalImage,0,0)
+
+if(maskPath){
+
+const val=document.getElementById("fabricSelect").value
+const cols=val.split(",")
+
+exportCtx.save()
+
+exportCtx.beginPath()
+exportCtx.moveTo(points[0].x,points[0].y)
+
+for(let i=1;i<points.length;i++){
+exportCtx.lineTo(points[i].x,points[i].y)
+}
+
+exportCtx.closePath()
+exportCtx.clip()
+
+exportCtx.globalCompositeOperation="multiply"
+
+exportCtx.fillStyle=`rgb(${cols[0]},${cols[1]},${cols[2]})`
+
+exportCtx.fillRect(0,0,exportCanvas.width,exportCanvas.height)
+
+exportCtx.restore()
+
+}
+
+const imgURL=exportCanvas.toDataURL("image/png")
+
+const isMobile=/iPhone|Android/i.test(navigator.userAgent)
+
+if(isMobile){
+
+const area=document.getElementById("saveArea")
+
+area.innerHTML=""
+
+const img=document.createElement("img")
+img.src=imgURL
+img.style.width="95%"
+img.style.marginTop="20px"
+
+area.appendChild(img)
+
+alert("画像を長押しして保存してください")
+
+}else{
+
+const link=document.createElement("a")
+link.download="tent_simulation.png"
+link.href=imgURL
+link.click()
+
+}
+
+}
+
 </script>
+
 </body>
 </html>
