@@ -40,15 +40,14 @@ async function initAI() {
     try {
         statusDiv.textContent = "AIエンジン初期化中...";
         
-        // ローカルWASMリソースがブロックされるのを防ぐため、CDNを固定
+        // バージョンを 0.10.3 に統一
         const vision = await mediapipe.tasksVision.FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
         );
 
         interactiveSegmenter = await mediapipe.tasksVision.InteractiveSegmenter.createFromOptions(vision, {
             baseOptions: {
-                // モデルのパスをより安定したCDN経由に変更
-                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/models/interactive_segmenter.tflite",
+                modelAssetPath: "magic_touch.tflite", // 必ずファイル名を一致させてください
                 delegate: "GPU"
             },
             outputCategoryMask: true,
@@ -56,12 +55,10 @@ async function initAI() {
         });
         
         statusDiv.textContent = "AI準備完了：テントをタップして自動抽出";
-        statusDiv.style.color = "#28a745"; // 成功時は緑色に
+        statusDiv.style.color = "#28a745";
     } catch (e) {
         console.error("AI Init Error:", e);
-        // エラーが出ても「手動モード」で動くように案内を変更
-        statusDiv.innerHTML = "<span style='color:orange;'>⚠️ AI限定動作中（通信制限あり）: 手動で囲んでください</span>";
-        // AIが無くてもエラーで止まらないように interactiveSegmenter は null のまま維持
+        statusDiv.innerHTML = "<span style='color:orange;'>⚠️ 通信制限により手動モードで動作中</span>";
     }
 }
 
@@ -118,14 +115,21 @@ async function runAI(x, y) {
     if (!interactiveSegmenter || !originalImage) return;
     statusDiv.textContent = "⏳ 解析中...";
     try {
+        // 重要：座標を 0.0 ~ 1.0 に正規化して渡す必要があります
         const result = await interactiveSegmenter.segment(originalImage, {
-            keypoint: { x: x / canvas.width, y: y / canvas.height }
+            keypoint: { 
+                x: x / originalImage.width, 
+                y: y / originalImage.height 
+            }
         });
+        
         const mask = result.categoryMask.getAsUint8Array();
         const mCanvas = document.createElement("canvas");
-        mCanvas.width = canvas.width; mCanvas.height = canvas.height;
+        mCanvas.width = canvas.width; 
+        mCanvas.height = canvas.height;
         const mCtx = mCanvas.getContext("2d");
         const mImgData = mCtx.createImageData(canvas.width, canvas.height);
+        
         let hit = false;
         for (let i = 0; i < mask.length; i++) {
             if (mask[i] > 0) {
@@ -135,6 +139,7 @@ async function runAI(x, y) {
             }
         }
         mCtx.putImageData(mImgData, 0, 0);
+        
         if(hit) {
             maskPath = new Path2D(mCanvas);
             statusDiv.textContent = "✅ 抽出成功";
@@ -142,7 +147,10 @@ async function runAI(x, y) {
             statusDiv.textContent = "❌ 認識できませんでした";
         }
         needsRedraw = true;
-    } catch (err) { statusDiv.textContent = "❌ 解析エラー"; }
+    } catch (err) { 
+        console.error(err);
+        statusDiv.textContent = "❌ 解析エラー"; 
+    }
 }
 
 function getMousePos(e) {
