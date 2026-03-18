@@ -11,7 +11,7 @@
         #status { color: #444; font-size: 0.85em; margin-bottom: 10px; padding: 8px; background: #eee; border-radius: 4px; min-height: 1.5em; }
     </style>
     
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -40,46 +40,20 @@ const statusDiv = document.getElementById("status");
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function initAI() {
-    try {
-        statusDiv.textContent = "AIライブラリ接続中...";
-        
-        let retryCount = 0;
-        let visionRoot = null;
+    // 2. WASMファイルの参照先を、安定している公式URLに固定する
+    const visionRoot = await filesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+    );
 
-        // ライブラリが定義されるまで粘り強く探す
-        while (retryCount < 50) {
-            // いろいろな定義パターンに対応
-            visionRoot = window.tasksVision || (window.mediapipe ? window.mediapipe.tasksVision : null);
-            
-            if (visionRoot) break;
-            await new Promise(r => setTimeout(r, 100));
-            retryCount++;
-        }
-
-        if (!visionRoot) {
-            throw new Error("MediaPipeがブラウザに見つかりません。URLの設定ミスか通信ブロックです。");
-        }
-
-        const vision = await visionRoot.FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
-
-        interactiveSegmenter = await visionRoot.InteractiveSegmenter.createFromOptions(vision, {
-            baseOptions: {
-                modelAssetPath: "./magic_touch.tflite", // ここは ./ を忘れずに
-                delegate: "GPU"
-            },
-            outputCategoryMask: true,
-            outputConfidenceMasks: false
-        });
-        
-        statusDiv.textContent = "AI準備完了：テントをタップしてください";
-        statusDiv.style.color = "#28a745";
-
-    } catch (e) {
-        console.error(e);
-        statusDiv.innerHTML = `<span style="color:red; font-size:0.8em;">❌ 起動失敗: ${e.message}</span>`;
-    }
+    const imageSegmenter = await ImageSegmenter.createFromOptions(visionRoot, {
+        baseOptions: {
+            modelAssetPath: "./magic_touch.tflite", // 自分でアップしたモデル
+            delegate: "GPU"
+        },
+        runningMode: "IMAGE",
+        outputCategoryMask: true
+    });
+    return imageSegmenter;
 }
 
 // ページ読み込み完了後に実行
