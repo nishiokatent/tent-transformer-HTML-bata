@@ -18,7 +18,17 @@ font-family:sans-serif;
 text-align:center;
 }
 
-canvas{
+canvas {
+    /* 長押しでのテキスト選択やメニューを禁止 */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    
+    border:1px solid #aaa;
+    max-width:95%;
+    touch-action:none; /* ブラウザのスクロール等を防止 */
+    cursor: crosshair;
+
 border:1px solid #aaa;
 max-width:95%;
 touch-action:none;
@@ -237,7 +247,10 @@ y:(y-offsetY)/scale
    pointerdown
 ========================= */
 
-canvas.addEventListener("pointerdown",e=>{
+canvas.addEventListener("pointerdown", e => {
+    e.preventDefault(); // システムメニューを防止
+    canvas.setPointerCapture(e.pointerId);
+    // ...（以下、既存の処理と同じ）
 
 canvas.setPointerCapture(e.pointerId)
 
