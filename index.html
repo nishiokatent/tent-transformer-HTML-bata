@@ -3,24 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-    <title>Tent Simulator AI Test</title>
+    <title>Tent Simulator AI Stable</title>
     <style>
         body { font-family: sans-serif; text-align: center; margin: 0; padding: 10px; -webkit-touch-callout: none; user-select: none; }
         canvas { border: 1px solid #aaa; max-width: 95%; touch-action: none; background-color: #f8f8f8; -webkit-touch-callout: none; }
         button { margin: 3px; padding: 10px 14px; appearance: none; -webkit-appearance: none; border-radius: 6px; border: 1px solid #ccc; background: #fff; }
-        #status { color: #444; font-size: 0.85em; margin-bottom: 10px; padding: 8px; background: #eee; border-radius: 4px; }
+        #status { color: #444; font-size: 0.85em; margin-bottom: 10px; padding: 8px; background: #eee; border-radius: 4px; min-height: 1.5em; }
     </style>
+    
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3" crossorigin="anonymous"></script>
 </head>
 <body>
 
-<h2>テント AIシミュレーター (Debug版)</h2>
-<div id="status">初期化を待機中...</div>
+<h2>テント AIシミュレーター (安定版)</h2>
+<div id="status">システム起動中...</div>
 
 <input type="file" id="upload" accept="image/*"><br><br>
 
 <select id="fabricSelect">
-    <option value="">生地ロード中...</option>
+    <option value="">生地読み込み中...</option>
 </select>
 
 <br><br>
@@ -35,20 +36,20 @@
 let interactiveSegmenter;
 const statusDiv = document.getElementById("status");
 
-// AI初期化関数
 async function initAI() {
-    statusDiv.textContent = "1/2: WASMエンジンの準備中...";
+    statusDiv.textContent = "AIエンジンを接続中...";
+    
     try {
-        // ローダーを確実に取得
-        if (typeof mediapipe === 'undefined' || !mediapipe.tasksVision) {
-            throw new Error("SDKが読み込まれていません。ネット接続を確認してください。");
+        // SDKが読み込まれているか最終確認
+        if (typeof mediapipe === 'undefined') {
+            // もしjsdelivrがダメだった場合、ここで別のURLから再試行するスクリプトを動的に追加
+            statusDiv.textContent = "予備の接続先に切り替えています...";
+            await loadScript("https://www.gstatic.com/mediapipe/solutions/interactive_segmenter/interactive_segmenter.js");
         }
 
         const vision = await mediapipe.tasksVision.FilesetResolver.forVisionTasks(
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
         );
-        
-        statusDiv.textContent = "2/2: AIモデルのダウンロード中...";
         
         interactiveSegmenter = await mediapipe.tasksVision.InteractiveSegmenter.createFromOptions(vision, {
             baseOptions: {
@@ -59,32 +60,37 @@ async function initAI() {
             outputConfidenceMasks: false
         });
         
-        statusDiv.textContent = "✅ AI準備完了：画像をアップして、テントをタップしてください";
-        statusDiv.style.background = "#e6fffa";
+        statusDiv.textContent = "✅ 準備完了：テントをタップしてください";
+        statusDiv.style.background = "#d1fae5";
     } catch (e) {
-        statusDiv.innerHTML = `<b style="color:red;">⚠️ エラー詳細: ${e.message}</b><br><small>ページを再読み込みするか、通信環境を確認してください</small>`;
-        console.error("AI Init Error:", e);
+        statusDiv.innerHTML = `<b style="color:red;">⚠️ 接続エラー</b><br><small>Wi-Fiを切り替えるか、広告ブロックをオフにしてみてください</small>`;
+        console.error(e);
     }
 }
 
-// 確実にSDK読み込み後に走らせる
-if (document.readyState === 'complete') {
-    initAI();
-} else {
-    window.addEventListener('load', initAI);
+// 予備のスクリプト読み込み用
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
 }
 
-/* --- Canvas基本設定 --- */
+window.onload = initAI;
+
+/* --- 以下、共通の描画処理 --- */
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const csvURL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQyMy5PUSJjr1f_fnQIpRIUagAp8Dw7Hqckr9422w_459qgQ_j4Bhw4LWygLVWTURa9n4Xl_gBNHAie/pub?output=csv";
 
-let originalImage = null, maskPath = null, points = [];
+let originalImage = null, maskPath = null;
 let scale = 1, offsetX = 0, offsetY = 0;
 let pointers = [], lastDistance = 0, lastPanX = 0, lastPanY = 0;
 let moved = false, pinchUsed = false, needsRedraw = true;
 
-/* --- CSV読み込み --- */
 fetch(csvURL).then(res => res.text()).then(text => {
     const rows = text.trim().split("\n").slice(1);
     const select = document.getElementById("fabricSelect");
@@ -98,7 +104,6 @@ fetch(csvURL).then(res => res.text()).then(text => {
     });
 });
 
-/* --- 画像読み込み --- */
 document.getElementById("upload").onchange = e => {
     const file = e.target.files[0];
     if(!file) return;
@@ -106,13 +111,12 @@ document.getElementById("upload").onchange = e => {
     img.onload = () => {
         canvas.width = img.width; canvas.height = img.height;
         scale = 1; offsetX = 0; offsetY = 0;
-        originalImage = img; maskPath = null; points = [];
+        originalImage = img; maskPath = null;
         needsRedraw = true;
     };
     img.src = URL.createObjectURL(file);
 };
 
-/* --- AI解析実行 --- */
 async function runAI(x, y) {
     if (!interactiveSegmenter || !originalImage) return;
     statusDiv.textContent = "⏳ 解析中...";
@@ -121,7 +125,6 @@ async function runAI(x, y) {
             keypoint: { x: x / canvas.width, y: y / canvas.height }
         });
         const mask = result.categoryMask.getAsUint8Array();
-        
         const mCanvas = document.createElement("canvas");
         mCanvas.width = canvas.width; mCanvas.height = canvas.height;
         const mCtx = mCanvas.getContext("2d");
@@ -139,15 +142,12 @@ async function runAI(x, y) {
             maskPath = new Path2D(mCanvas);
             statusDiv.textContent = "✅ 抽出成功";
         } else {
-            statusDiv.textContent = "❌ 対象が認識できませんでした";
+            statusDiv.textContent = "❌ 認識できませんでした";
         }
         needsRedraw = true;
-    } catch (err) {
-        statusDiv.textContent = "❌ 解析エラー";
-    }
+    } catch (err) { statusDiv.textContent = "❌ 解析エラー"; }
 }
 
-/* --- 操作イベント --- */
 function getMousePos(e) {
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (canvas.width / rect.width);
@@ -200,7 +200,6 @@ canvas.addEventListener("pointerup", e => {
     }
 });
 
-/* --- 描画 --- */
 function draw() {
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -224,7 +223,7 @@ function renderLoop() { if (needsRedraw) { draw(); needsRedraw = false; } reques
 requestAnimationFrame(renderLoop);
 
 document.getElementById("fabricSelect").onchange = () => { needsRedraw = true; };
-function clearPolygon() { maskPath = null; statusDiv.textContent = "✅ AI準備完了"; needsRedraw = true; }
+function clearPolygon() { maskPath = null; statusDiv.textContent = "✅ 準備完了"; needsRedraw = true; }
 
 function saveImage() {
     if(!originalImage) return;
