@@ -36,80 +36,64 @@
 let interactiveSegmenter;
 const statusDiv = document.getElementById("status");
 
+// ライブラリが読み込まれるのを待つ関数
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 async function initAI() {
     try {
-        statusDiv.textContent = "AIエンジン初期化中...";
-        statusDiv.style.color = "#444";
+        statusDiv.textContent = "AI準備中 (Library checking...)";
+        
+        // ライブラリ(mediapipe)がグローバルに定義されるまで最大5秒待つ
+        let retryCount = 0;
+        while (!window.mediapipe && !window.tasksVision && retryCount < 50) {
+            await delay(100);
+            retryCount++;
+        }
 
-        // 1. ライブラリ本体(WASM)の読み込みチェック
-        const vision = await mediapipe.tasksVision.FilesetResolver.forVisionTasks(
+        // どこにライブラリがあるか探す（バージョンによって場所が変わるため）
+        const visionRoot = window.tasksVision || (window.mediapipe ? window.mediapipe.tasksVision : null);
+        
+        if (!visionRoot) {
+            throw new Error("MediaPipeライブラリ本体の読み込みに失敗しました。CDNの通信を確認してください。");
+        }
+
+        const vision = await visionRoot.FilesetResolver.forVisionTasks(
             "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
         );
 
-        // 2. モデルファイルの存在確認（fetchテスト）
-        const checkModel = await fetch("./magic_touch.tflite");
-        if (!checkModel.ok) {
-            throw new Error(`モデルファイルが見つかりません (Status: ${checkModel.status})。ファイル名と配置を再確認してください。`);
-        }
+        statusDiv.textContent = "AIモデル読み込み中...";
 
-        // 3. セグメンターの作成
-        interactiveSegmenter = await mediapipe.tasksVision.InteractiveSegmenter.createFromOptions(vision, {
+        interactiveSegmenter = await visionRoot.InteractiveSegmenter.createFromOptions(vision, {
             baseOptions: {
-                modelAssetPath: "./magic_touch.tflite",
-                delegate: "GPU" // ← ここで失敗する場合は "CPU" に自動的に切り替わるよう下に記述
+                // 同じ階層にあることを ./ で明示
+                modelAssetPath: "./magic_touch.tflite", 
+                delegate: "GPU"
             },
             outputCategoryMask: true,
             outputConfidenceMasks: false
         });
-
-        statusDiv.textContent = "AI準備完了：テントをタップして自動抽出";
+        
+        statusDiv.textContent = "AI準備完了：テントをタップしてください";
         statusDiv.style.color = "#28a745";
 
     } catch (e) {
-        console.error("Detailed AI Error:", e);
+        console.error("AI Init Detailed Error:", e);
         
-        // GPUが原因で失敗している可能性を考慮してCPUで再試行
-        if (e.message.includes("GPU") || e.message.includes("webgl")) {
-            statusDiv.textContent = "GPUエラーのためCPUモードで再試行中...";
-            retryWithCPU();
+        // エラーの正体を画面に詳しく出す
+        if (e.message.includes("404")) {
+            statusDiv.innerHTML = `<span style="color:red;">❌ モデルファイル(.tflite)が見つかりません。名前が magic_touch.tflite か確認してください。</span>`;
+        } else if (e.message.includes("mediapipe")) {
+            statusDiv.innerHTML = `<span style="color:red;">❌ ライブラリ定義エラー。ネット環境を変えて試してください。</span>`;
         } else {
-            // エラーの内容を具体的に画面に出す
-            statusDiv.innerHTML = `<span style="color:red; font-size:0.7em;">❌ AI起動失敗: ${e.message}</span>`;
+            statusDiv.innerHTML = `<span style="color:red; font-size:0.8em;">❌ エラー: ${e.message}</span>`;
         }
     }
 }
 
-// CPUモードでの再試行用関数
-async function retryWithCPU() {
-    try {
-        const vision = await mediapipe.tasksVision.FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
-        interactiveSegmenter = await mediapipe.tasksVision.InteractiveSegmenter.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: "./magic_touch.tflite", delegate: "CPU" },
-            outputCategoryMask: true, outputConfidenceMasks: false
-        });
-        statusDiv.textContent = "AI準備完了 (CPUモード)";
-        statusDiv.style.color = "#28a745";
-    } catch (e) {
-        statusDiv.innerHTML = `<span style="color:red; font-size:0.7em;">❌ CPUでも起動失敗: ${e.message}</span>`;
-    }
-}
+// ページ読み込み完了後に実行
+window.addEventListener('load', initAI);
 
-// 予備のスクリプト読み込み用
-function loadScript(src) {
-    return new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = src;
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-    });
-}
-
-window.onload = initAI;
-
-/* --- 以下、共通の描画処理 --- */
+/* --- 以下、共通の描画処理（変更なし・念のため最新版） --- */
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const csvURL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQyMy5PUSJjr1f_fnQIpRIUagAp8Dw7Hqckr9422w_459qgQ_j4Bhw4LWygLVWTURa9n4Xl_gBNHAie/pub?output=csv";
@@ -119,6 +103,7 @@ let scale = 1, offsetX = 0, offsetY = 0;
 let pointers = [], lastDistance = 0, lastPanX = 0, lastPanY = 0;
 let moved = false, pinchUsed = false, needsRedraw = true;
 
+// CSV読み込み
 fetch(csvURL).then(res => res.text()).then(text => {
     const rows = text.trim().split("\n").slice(1);
     const select = document.getElementById("fabricSelect");
@@ -132,6 +117,7 @@ fetch(csvURL).then(res => res.text()).then(text => {
     });
 });
 
+// 画像アップロード
 document.getElementById("upload").onchange = e => {
     const file = e.target.files[0];
     if(!file) return;
@@ -149,21 +135,14 @@ async function runAI(x, y) {
     if (!interactiveSegmenter || !originalImage) return;
     statusDiv.textContent = "⏳ 解析中...";
     try {
-        // 重要：座標を 0.0 ~ 1.0 に正規化して渡す必要があります
         const result = await interactiveSegmenter.segment(originalImage, {
-            keypoint: { 
-                x: x / originalImage.width, 
-                y: y / originalImage.height 
-            }
+            keypoint: { x: x / originalImage.width, y: y / originalImage.height }
         });
-        
         const mask = result.categoryMask.getAsUint8Array();
         const mCanvas = document.createElement("canvas");
-        mCanvas.width = canvas.width; 
-        mCanvas.height = canvas.height;
+        mCanvas.width = canvas.width; mCanvas.height = canvas.height;
         const mCtx = mCanvas.getContext("2d");
         const mImgData = mCtx.createImageData(canvas.width, canvas.height);
-        
         let hit = false;
         for (let i = 0; i < mask.length; i++) {
             if (mask[i] > 0) {
@@ -173,18 +152,14 @@ async function runAI(x, y) {
             }
         }
         mCtx.putImageData(mImgData, 0, 0);
-        
         if(hit) {
             maskPath = new Path2D(mCanvas);
             statusDiv.textContent = "✅ 抽出成功";
         } else {
-            statusDiv.textContent = "❌ 認識できませんでした";
+            statusDiv.textContent = "❌ 対象が見つかりません";
         }
         needsRedraw = true;
-    } catch (err) { 
-        console.error(err);
-        statusDiv.textContent = "❌ 解析エラー"; 
-    }
+    } catch (err) { statusDiv.textContent = "❌ 解析エラー"; }
 }
 
 function getMousePos(e) {
@@ -209,7 +184,7 @@ canvas.addEventListener("pointermove", e => {
         const p1 = pointers[0], p2 = pointers[1];
         const rect = canvas.getBoundingClientRect();
         const centerX = (p1.clientX + p2.clientX) / 2;
-        const centerY = (p1.clientY + p2.clientY) / 2;
+        const centerY = (p1.centerY + p2.centerY) / 2;
         const canvasX = (centerX - rect.left) * (canvas.width / rect.width);
         const canvasY = (centerY - rect.top) * (canvas.height / rect.height);
         const dist = Math.sqrt(Math.pow(p1.clientX - p2.clientX, 2) + Math.pow(p1.clientY - p2.clientY, 2));
